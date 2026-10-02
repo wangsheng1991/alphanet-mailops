@@ -1,0 +1,8 @@
+{
+  "name": "DLSS5 Studio MailOps Verification",
+  "version": "1.0.0",
+  "platform": "Any",
+  "purpose": "End-to-end private delivery verification",
+  "containsStudioApplication": false,
+  "issued": "2026-10-02"
+}

@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check backend syntax
+        run: python -m py_compile server.py
+      - name: Check frontend syntax
+        run: node --check web/app.js
+      - name: Verify clean example configuration
+        run: |
+          python - <<'PY'
+          import os
+          import tempfile
+
+          work = tempfile.mkdtemp()
+          os.environ["MAILOPS_DB"] = os.path.join(work, "mailops.db")
+          os.environ["MAILOPS_ARTIFACT_ROOT"] = os.path.join(work, "artifacts")
+
+          import server
+
+          server.init_db()
+          conn = server.db_connect()
+          columns = [row["name"] for row in conn.execute("PRAGMA table_info(requests)")]
+          template = conn.execute("SELECT body FROM templates WHERE id = 'delivery'").fetchone()
+          conn.close()
+          assert "recipient_name" in columns
+          assert "{recipient_name}" in template["body"]
+          assert server.render_template("Hi&#x20;{recipient_name}", {"recipient_name": "Alex"}) == "Hi Alex"
+          PY

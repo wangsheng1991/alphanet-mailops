@@ -1,0 +1,10 @@
+tunnel: REPLACE_TUNNEL_ID
+credentials-file: /root/.cloudflared/REPLACE_TUNNEL_ID.json
+metrics: 127.0.0.1:20243
+
+ingress:
+  - hostname: mailops.alphanetplus.com
+    service: http://127.0.0.1:9400
+  - hostname: download.alphanetplus.com
+    service: http://127.0.0.1:9400
+  - service: http_status:404

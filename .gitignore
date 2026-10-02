@@ -1,0 +1,16 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+data/
+*.db
+*.db-*
+*.sqlite*
+artifacts/*.zip
+.superdesign/
+*.log
+*.pem
+*.key
+*.json.credentials

@@ -1,0 +1,17 @@
+[Unit]
+Description=Cloudflare Tunnel - AlphaNet MailOps
+After=network-online.target alphanet-mailops.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/cloudflared --no-autoupdate --config /etc/cloudflared/mailops-token.yml tunnel run --token-file /etc/cloudflared/mailops.token
+Restart=always
+RestartSec=5
+LimitNOFILE=100000
+KillMode=mixed
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

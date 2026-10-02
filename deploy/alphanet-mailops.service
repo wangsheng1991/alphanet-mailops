@@ -1,0 +1,20 @@
+[Unit]
+Description=AlphaNet MailOps
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/alphanet-mailops
+EnvironmentFile=/opt/alphanet-mailops/.env
+ExecStart=/usr/bin/python3 /opt/alphanet-mailops/server.py
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/alphanet-mailops/data
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#090c0b" />
+    <title>AlphaNet MailOps</title>
+    <link rel="icon" href="/favicon.svg" />
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <div id="toast" class="toast" aria-live="polite"></div>
+
+    <section id="loginView" class="login-shell">
+      <div class="login-grid"></div>
+      <main class="login-card">
+        <div class="brand-mark">A</div>
+        <p class="eyebrow">ALPHANET · PRIVATE OPERATIONS</p>
+        <h1>交付，不只是<br /><span>发送一封邮件。</span></h1>
+        <p class="lead">集中审核 DLSS5 下载申请、分配构建、生成限时链接，并留下完整操作记录。</p>
+        <form id="loginForm" class="login-form">
+          <label>管理员邮箱<input id="loginEmail" type="email" autocomplete="username" required placeholder="you@example.com" /></label>
+          <label>密码<input id="loginPassword" type="password" autocomplete="current-password" required placeholder="••••••••" /></label>
+          <button class="primary wide" type="submit"><span>进入控制台</span><i>↗</i></button>
+        </form>
+        <button id="googleLogin" class="google wide" type="button">使用 Google 登录</button>
+        <p id="loginError" class="form-error"></p>
+        <div class="login-foot"><span class="pulse"></span> SECURE ADMIN ACCESS</div>
+      </main>
+    </section>
+
+    <div id="appView" class="app-shell hidden">
+      <aside class="sidebar">
+        <a class="logo" href="#requests" aria-label="AlphaNet MailOps"><span>A</span><b>MAILOPS</b></a>
+        <nav id="nav">
+          <a href="#requests" data-page="requests" class="active"><i>⌁</i><span>请求队列</span><em id="navPending">0</em></a>
+          <a href="#builds" data-page="builds"><i>◇</i><span>构建版本</span></a>
+          <a href="#template" data-page="template"><i>▤</i><span>邮件模板</span></a>
+          <a href="#activity" data-page="activity"><i>↻</i><span>操作记录</span></a>
+        </nav>
+        <div class="sidebar-foot">
+          <div id="mailStatus" class="status-chip"><span></span> 邮件通道检查中</div>
+          <button id="logoutBtn" class="ghost small">退出登录</button>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div><p class="eyebrow">DLSS5 STUDIO</p><h2 id="pageTitle">下载请求</h2></div>
+          <div class="operator"><div><b id="operatorEmail">—</b><span>Administrator</span></div><span class="avatar">WS</span></div>
+        </header>
+
+        <section id="requestsPage" class="page">
+          <div class="metrics">
+            <article><span>待处理</span><strong id="metricPending">0</strong><small>等待审核的申请</small></article>
+            <article><span>审核中</span><strong id="metricReviewing">0</strong><small>正在核对信息</small></article>
+            <article><span>已发送</span><strong id="metricSent">0</strong><small>已交付下载链接</small></article>
+            <article class="accent"><span>可用构建</span><strong id="metricBuilds">0</strong><small>当前开放版本</small></article>
+          </div>
+
+          <div class="request-layout">
+            <section class="queue-panel panel">
+              <div class="panel-head"><div><p class="eyebrow">REQUEST INBOX</p><h3>申请队列</h3></div><button id="refreshBtn" class="icon-btn" title="刷新">↻</button></div>
+              <div class="filters">
+                <div class="search"><span>⌕</span><input id="requestSearch" placeholder="搜索邮箱、机器或备注" /></div>
+                <select id="statusFilter"><option value="all">全部状态</option><option value="pending">待处理</option><option value="reviewing">审核中</option><option value="approved">已批准</option><option value="sent">已发送</option><option value="rejected">已拒绝</option><option value="archived">已归档</option></select>
+              </div>
+              <div id="requestList" class="request-list"><div class="empty-state">正在读取请求…</div></div>
+            </section>
+
+            <section id="requestDetail" class="detail-panel panel">
+              <div class="empty-detail"><span>⌁</span><h3>选择一个请求</h3><p>查看申请详情、审核记录并发送私有下载链接。</p></div>
+            </section>
+
+            <aside id="sendPanel" class="send-panel panel">
+              <div class="panel-head"><div><p class="eyebrow">DELIVERY ACTION</p><h3>发送交付</h3></div></div>
+              <div class="send-empty"><div class="orb"></div><p>选择请求后即可配置构建与下载策略。</p></div>
+            </aside>
+          </div>
+        </section>
+
+        <section id="buildsPage" class="page hidden">
+          <div class="section-head"><div><p class="eyebrow">BUILD CATALOG</p><h3>构建版本</h3><p>这里保存真实文件地址；收件人看到的始终是受限的私有下载链接。</p></div><button id="newBuildBtn" class="primary">＋ 添加构建</button></div>
+          <div id="buildGrid" class="build-grid"></div>
+        </section>
+
+        <section id="templatePage" class="page hidden">
+          <div class="section-head"><div><p class="eyebrow">MESSAGE SYSTEM</p><h3>邮件模板</h3><p>可用变量：{recipient_name}、{email}、{machine}、{note}、{build_name}、{download_url}、{expires_hours}</p></div><button id="saveTemplateBtn" class="primary">保存模板</button></div>
+          <div class="template-layout">
+            <form class="panel editor-card" onsubmit="return false"><label>邮件主题<input id="templateSubject" /></label><label>正文<textarea id="templateBody" rows="17"></textarea></label></form>
+            <article class="panel email-preview"><div class="preview-bar"><i></i><i></i><i></i></div><small>PREVIEW</small><h4 id="previewSubject">—</h4><pre id="previewBody">—</pre></article>
+          </div>
+        </section>
+
+        <section id="activityPage" class="page hidden">
+          <div class="section-head"><div><p class="eyebrow">AUDIT TRAIL</p><h3>操作记录</h3><p>所有申请、发送和下载动作按时间留痕。</p></div><button id="refreshActivityBtn" class="ghost">刷新</button></div>
+          <div id="activityList" class="panel activity-list"></div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="buildDialog">
+      <form id="buildForm" method="dialog">
+        <div class="modal-head"><div><p class="eyebrow">NEW RELEASE</p><h3>添加构建</h3></div><button class="icon-btn" value="cancel">×</button></div>
+        <div class="form-grid"><label>名称<input name="name" required placeholder="DLSS5 Studio" /></label><label>版本<input name="version" placeholder="5.2.0" /></label><label>平台<input name="platform" value="Windows" /></label><label>GPU 要求<input name="gpu" value="NVIDIA RTX" /></label></div>
+        <label>下载目标<input name="download_url" required placeholder="https://... 或 artifact:文件名.zip" /></label>
+        <label>校验值（可选）<input name="checksum" placeholder="SHA256" /></label>
+        <div class="modal-actions"><button value="cancel" class="ghost">取消</button><button id="createBuildBtn" type="submit" value="default" class="primary">保存构建</button></div>
+      </form>
+    </dialog>
+
+    <script defer src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+    <script defer src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+    <script defer src="/app.js"></script>
+  </body>
+</html>
