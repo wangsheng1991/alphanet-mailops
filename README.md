@@ -11,6 +11,7 @@ Private download gateway: <https://download.alphanetplus.com>
 
 - Webhook intake with idempotent request IDs
 - Queue, search, review, reject, and audit workflows
+- Segmented customer replies for qualified RTX users, mobile compatibility guidance, and missing-device follow-up
 - One-click delivery: recipient name, build, expiry, and private URL are filled automatically
 - Editable global mail template with live preview
 - Resend transactional email delivery

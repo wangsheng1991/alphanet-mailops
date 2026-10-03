@@ -145,6 +145,8 @@ def init_db():
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           last_sent_at TEXT,
+          last_reply_at TEXT,
+          reply_kind TEXT NOT NULL DEFAULT '',
           assigned_build_id INTEGER,
           internal_note TEXT NOT NULL DEFAULT '',
           FOREIGN KEY (assigned_build_id) REFERENCES builds(id)
@@ -212,6 +214,10 @@ def init_db():
     request_columns = set(row["name"] for row in conn.execute("PRAGMA table_info(requests)"))
     if "recipient_name" not in request_columns:
         conn.execute("ALTER TABLE requests ADD COLUMN recipient_name TEXT NOT NULL DEFAULT ''")
+    if "last_reply_at" not in request_columns:
+        conn.execute("ALTER TABLE requests ADD COLUMN last_reply_at TEXT")
+    if "reply_kind" not in request_columns:
+        conn.execute("ALTER TABLE requests ADD COLUMN reply_kind TEXT NOT NULL DEFAULT ''")
     conn.execute(
         """INSERT OR IGNORE INTO templates(id, subject, body, updated_at)
            VALUES (?, ?, ?, ?)""",
@@ -722,7 +728,7 @@ class Handler(SimpleHTTPRequestHandler):
             item = row_dict(conn.execute("SELECT * FROM builds WHERE id = ?", (cursor.lastrowid,)).fetchone())
             conn.close()
             return self.send_json(HTTPStatus.CREATED, item)
-        match = re.match(r"^/api/requests/([^/]+)/(send|reject)$", path)
+        match = re.match(r"^/api/requests/([^/]+)/(send|reply|reject)$", path)
         if match:
             request_id = safe_text(match.group(1), 80)
             action = match.group(2)
@@ -738,6 +744,38 @@ class Handler(SimpleHTTPRequestHandler):
                 conn.commit()
                 conn.close()
                 return self.send_json(HTTPStatus.OK, {"ok": True})
+            if action == "reply":
+                if not RESEND_API_KEY:
+                    return self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "邮件通道尚未配置，暂时不能发送"})
+                subject = safe_text(payload.get("subject"), 200)
+                body = safe_text(payload.get("body"), 8000)
+                reply_kind = safe_text(payload.get("kind") or "custom", 40)
+                if not subject or not body:
+                    raise ValueError("回复主题和正文不能为空")
+                conn = db_connect()
+                item = conn.execute("SELECT * FROM requests WHERE id = ?", (request_id,)).fetchone()
+                if not item:
+                    conn.close()
+                    return self.send_json(HTTPStatus.NOT_FOUND, {"error": "请求不存在"})
+                try:
+                    provider_id = send_resend(item["email"], subject, body)
+                except Exception:
+                    audit(conn, "mail.failed", identity["email"], request_id, "Customer reply provider rejected the message")
+                    conn.commit()
+                    conn.close()
+                    raise
+                now_value = utcnow()
+                next_status = item["status"]
+                if next_status in ("pending", "reviewing", "approved"):
+                    next_status = "reviewing"
+                conn.execute(
+                    "UPDATE requests SET status = ?, last_reply_at = ?, reply_kind = ?, updated_at = ? WHERE id = ?",
+                    (next_status, now_value, reply_kind, now_value, request_id),
+                )
+                audit(conn, "mail.reply_sent", identity["email"], request_id, "Kind: %s; Provider id: %s" % (reply_kind, provider_id))
+                conn.commit()
+                conn.close()
+                return self.send_json(HTTPStatus.OK, {"ok": True, "providerId": provider_id})
             if not RESEND_API_KEY:
                 return self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "邮件通道尚未配置，暂时不能发送"})
             try:
