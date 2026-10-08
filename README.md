@@ -12,6 +12,7 @@ Private download gateway: <https://download.alphanetplus.com>
 - Webhook intake with idempotent request IDs
 - Queue, search, review, reject, and audit workflows
 - Segmented customer replies for qualified RTX users, mobile compatibility guidance, and missing-device follow-up
+- One-time automatic replies for new requests, with configurable scan interval, batch size, retry tracking, and provider idempotency
 - One-click delivery: recipient name, build, expiry, and private URL are filled automatically
 - Editable global mail template with live preview
 - Resend transactional email delivery
@@ -37,6 +38,8 @@ flowchart LR
 ```
 
 The email preview is materialized before sending. Operators see the real recipient name, selected build, expiry, and the fact that the private URL will be created on send; they do not manually replace `{placeholders}`.
+
+Automatic replies are transactional responses to a submitted download request, not marketing campaigns. Each request is replied to at most once, then moved to `reviewing`. The worker scans every 15 minutes by default and wakes immediately when a new intake arrives. Administrators can pause it or change the interval and batch size from the mail-template page.
 
 ## Quick start
 

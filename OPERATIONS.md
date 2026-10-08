@@ -43,6 +43,7 @@ README and machine-readable manifest.
 
 - Resend sending domain: verified.
 - Resend delivery to the administrator account: delivered.
+- Automatic request replies: one-time per request, enabled by default, 15-minute fallback scan with immediate intake wake-up.
 - Intake to MailOps: accepted.
 - Active build visible through the admin API: 1.
 - Private landing page: HTTP 200 without consuming a download.

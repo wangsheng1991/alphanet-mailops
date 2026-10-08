@@ -54,6 +54,8 @@ MAIL_FROM = os.environ.get("MAIL_FROM", "DLSS5 Studio <downloads@alphanetplus.co
 MAIL_REPLY_TO = os.environ.get("MAIL_REPLY_TO", "")
 TOKEN_CACHE = {}
 TOKEN_CACHE_LOCK = threading.Lock()
+AUTO_REPLY_WAKE = threading.Event()
+AUTO_REPLY_ACTOR = "auto-reply@system"
 
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
@@ -147,6 +149,9 @@ def init_db():
           last_sent_at TEXT,
           last_reply_at TEXT,
           reply_kind TEXT NOT NULL DEFAULT '',
+          auto_reply_claimed_at TEXT,
+          auto_reply_attempts INTEGER NOT NULL DEFAULT 0,
+          auto_reply_error TEXT NOT NULL DEFAULT '',
           assigned_build_id INTEGER,
           internal_note TEXT NOT NULL DEFAULT '',
           FOREIGN KEY (assigned_build_id) REFERENCES builds(id)
@@ -209,6 +214,12 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires
           ON admin_sessions(expires_at);
+
+        CREATE TABLE IF NOT EXISTS settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
         """
     )
     request_columns = set(row["name"] for row in conn.execute("PRAGMA table_info(requests)"))
@@ -218,6 +229,21 @@ def init_db():
         conn.execute("ALTER TABLE requests ADD COLUMN last_reply_at TEXT")
     if "reply_kind" not in request_columns:
         conn.execute("ALTER TABLE requests ADD COLUMN reply_kind TEXT NOT NULL DEFAULT ''")
+    if "auto_reply_claimed_at" not in request_columns:
+        conn.execute("ALTER TABLE requests ADD COLUMN auto_reply_claimed_at TEXT")
+    if "auto_reply_attempts" not in request_columns:
+        conn.execute("ALTER TABLE requests ADD COLUMN auto_reply_attempts INTEGER NOT NULL DEFAULT 0")
+    if "auto_reply_error" not in request_columns:
+        conn.execute("ALTER TABLE requests ADD COLUMN auto_reply_error TEXT NOT NULL DEFAULT ''")
+    for key, value in (
+        ("auto_reply_enabled", "1"),
+        ("auto_reply_interval_minutes", "15"),
+        ("auto_reply_batch_size", "10"),
+    ):
+        conn.execute(
+            "INSERT OR IGNORE INTO settings(key, value, updated_at) VALUES (?, ?, ?)",
+            (key, value, utcnow()),
+        )
     conn.execute(
         """INSERT OR IGNORE INTO templates(id, subject, body, updated_at)
            VALUES (?, ?, ?, ?)""",
@@ -395,7 +421,7 @@ def render_template(text, values):
     return output
 
 
-def send_resend(to_address, subject, text_body):
+def send_resend(to_address, subject, text_body, idempotency_key=""):
     if not RESEND_API_KEY:
         raise RuntimeError("邮件通道尚未配置")
     payload = {
@@ -408,15 +434,228 @@ def send_resend(to_address, subject, text_body):
     }
     if MAIL_REPLY_TO:
         payload["reply_to"] = MAIL_REPLY_TO
+    headers = {"Authorization": "Bearer " + RESEND_API_KEY}
+    if idempotency_key:
+        headers["Idempotency-Key"] = safe_text(idempotency_key, 256)
     status, data = http_json(
         "https://api.resend.com/emails",
         payload,
-        headers={"Authorization": "Bearer " + RESEND_API_KEY},
+        headers=headers,
     )
     if status >= 400:
         message = data.get("message") or data.get("error") or "邮件发送失败"
         raise RuntimeError(safe_text(message, 500))
     return data.get("id", "")
+
+
+def classify_reply(machine):
+    value = (machine or "").lower()
+    if re.search(r"\b(?:rtx|rtz)\s*[- ]?\d", value):
+        return "qualified"
+    if re.search(r"\bgtx\s*[- ]?\d", value):
+        return "incompatible"
+    if re.search(r"android|tablet|iphone|\bios\b|\ba0?5\b|vivo|galaxy|samsung|oppo|xiaomi|redmi", value):
+        return "mobile"
+    return "qualification"
+
+
+def reply_message(item, kind=None):
+    name = item["recipient_name"] or infer_recipient_name(item["email"])
+    machine = item["machine"] or "Not provided"
+    kind = kind or classify_reply(machine)
+    if kind == "qualified":
+        subject = "We’re reviewing your DLSS5 Studio request"
+        body = (
+            "Hi %s,\n\nThanks for requesting access to DLSS5 Studio. Your %s setup matches the "
+            "Windows + NVIDIA RTX profile we are currently reviewing.\n\nWe are not sending a software "
+            "package yet because the authorised build is still being prepared. We have marked your request "
+            "as high priority and will send a private link when a suitable build is ready.\n\nIf you reply, "
+            "please tell us which games or workflow you want to test and what kind of feedback you can provide."
+            "\n\n— DLSS5 Studio"
+        ) % (name, machine)
+    elif kind == "mobile":
+        subject = "About your DLSS5 Studio request"
+        body = (
+            "Hi %s,\n\nThanks for your download request. The device listed on your request is %s. "
+            "DLSS requires a compatible Windows PC with an NVIDIA RTX graphics card; it cannot be installed "
+            "as an Android or iOS app.\n\nWe have not sent a download package because it would not work on the "
+            "listed device. If you also have a Windows PC with an RTX GPU, reply with the Windows version and "
+            "exact GPU model and we will review your request again.\n\n— DLSS5 Studio"
+        ) % (name, machine)
+    elif kind == "incompatible":
+        subject = "Compatibility update for your DLSS5 Studio request"
+        body = (
+            "Hi %s,\n\nThanks for your download request. The graphics card listed on your request is %s. "
+            "The current workflow requires an NVIDIA RTX graphics card; GTX models are not compatible.\n\n"
+            "We have not sent a package because it would not work on the listed system. If you also have a "
+            "Windows PC with an RTX GPU, reply with the exact model and we will review your request again."
+            "\n\n— DLSS5 Studio"
+        ) % (name, machine)
+    else:
+        kind = "qualification"
+        subject = "A quick question about your DLSS5 Studio request"
+        body = (
+            "Hi %s,\n\nThanks for requesting access to DLSS5 Studio. Before we send any software, "
+            "we need to confirm that your system is compatible.\n\nPlease reply with:\n1. Your Windows version"
+            "\n2. Your exact NVIDIA GPU model\n3. The game or workflow you want to use\n\nOnce we have "
+            "those details, we can review the appropriate next step.\n\n— DLSS5 Studio"
+        ) % name
+    return kind, subject, body
+
+
+def setting_value(conn, key, default=""):
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def auto_reply_config(conn=None):
+    owns_connection = conn is None
+    conn = conn or db_connect()
+    try:
+        enabled = setting_value(conn, "auto_reply_enabled", "0") == "1"
+        interval = max(1, min(1440, int(setting_value(conn, "auto_reply_interval_minutes", "15"))))
+        batch_size = max(1, min(50, int(setting_value(conn, "auto_reply_batch_size", "10"))))
+        return {"enabled": enabled, "intervalMinutes": interval, "batchSize": batch_size}
+    finally:
+        if owns_connection:
+            conn.close()
+
+
+def auto_reply_status():
+    conn = db_connect()
+    try:
+        result = auto_reply_config(conn)
+        result["awaitingReply"] = conn.execute(
+            "SELECT COUNT(*) AS count FROM requests WHERE status = 'pending' AND last_reply_at IS NULL"
+        ).fetchone()["count"]
+        result["autoReplied"] = conn.execute(
+            "SELECT COUNT(*) AS count FROM requests WHERE last_reply_at IS NOT NULL AND auto_reply_attempts > 0"
+        ).fetchone()["count"]
+        result["failed"] = conn.execute(
+            "SELECT COUNT(*) AS count FROM requests WHERE auto_reply_error != '' AND last_reply_at IS NULL"
+        ).fetchone()["count"]
+        last_event = conn.execute(
+            "SELECT created_at FROM events WHERE kind = 'mail.auto_reply_sent' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        result["lastSentAt"] = last_event["created_at"] if last_event else None
+        return result
+    finally:
+        conn.close()
+
+
+def claim_auto_reply_batch(batch_size):
+    conn = db_connect()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        stale_before = (
+            datetime.datetime.utcnow() - datetime.timedelta(minutes=30)
+        ).replace(microsecond=0).isoformat() + "Z"
+        rows = conn.execute(
+            """SELECT * FROM requests
+               WHERE status = 'pending' AND last_reply_at IS NULL
+                 AND auto_reply_attempts < 3
+                 AND (auto_reply_claimed_at IS NULL OR auto_reply_claimed_at < ?)
+               ORDER BY created_at ASC LIMIT ?""",
+            (stale_before, batch_size),
+        ).fetchall()
+        claimed_at = utcnow()
+        for row in rows:
+            conn.execute(
+                "UPDATE requests SET auto_reply_claimed_at = ? WHERE id = ?",
+                (claimed_at, row["id"]),
+            )
+        conn.commit()
+        return [row_dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def send_automatic_reply(item):
+    conn = db_connect()
+    try:
+        current = conn.execute(
+            "SELECT * FROM requests WHERE id = ?", (item["id"],)
+        ).fetchone()
+        if not current or current["status"] != "pending" or current["last_reply_at"]:
+            conn.execute(
+                "UPDATE requests SET auto_reply_claimed_at = NULL WHERE id = ?",
+                (item["id"],),
+            )
+            conn.commit()
+            return False
+        item = row_dict(current)
+    finally:
+        conn.close()
+    kind, subject, body = reply_message(item)
+    provider_id = send_resend(
+        item["email"],
+        subject,
+        body,
+        "mailops-auto-reply-v1/%s" % item["id"],
+    )
+    conn = db_connect()
+    try:
+        now_value = utcnow()
+        conn.execute(
+            """UPDATE requests
+               SET status = 'reviewing', last_reply_at = ?, reply_kind = ?,
+                   auto_reply_claimed_at = NULL, auto_reply_attempts = auto_reply_attempts + 1,
+                   auto_reply_error = '', updated_at = ?
+               WHERE id = ? AND last_reply_at IS NULL""",
+            (now_value, kind, now_value, item["id"]),
+        )
+        audit(conn, "mail.auto_reply_sent", AUTO_REPLY_ACTOR, item["id"], "Kind: %s; Provider id: %s" % (kind, provider_id))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def fail_automatic_reply(item, exc):
+    conn = db_connect()
+    try:
+        message = safe_text(exc, 500)
+        conn.execute(
+            """UPDATE requests
+               SET auto_reply_claimed_at = NULL, auto_reply_attempts = auto_reply_attempts + 1,
+                   auto_reply_error = ?, updated_at = ? WHERE id = ?""",
+            (message, utcnow(), item["id"]),
+        )
+        audit(conn, "mail.auto_reply_failed", AUTO_REPLY_ACTOR, item["id"], message)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def run_auto_reply_once():
+    config = auto_reply_config()
+    if not config["enabled"] or not RESEND_API_KEY:
+        return {"processed": 0, "failed": 0}
+    items = claim_auto_reply_batch(config["batchSize"])
+    processed = 0
+    failed = 0
+    for item in items:
+        try:
+            if send_automatic_reply(item):
+                processed += 1
+        except Exception as exc:
+            fail_automatic_reply(item, exc)
+            failed += 1
+    return {"processed": processed, "failed": failed}
+
+
+def auto_reply_loop():
+    while True:
+        try:
+            config = auto_reply_config()
+            if config["enabled"]:
+                run_auto_reply_once()
+            wait_seconds = max(60, config["intervalMinutes"] * 60)
+        except Exception:
+            traceback.print_exc()
+            wait_seconds = 60
+        AUTO_REPLY_WAKE.wait(wait_seconds)
+        AUTO_REPLY_WAKE.clear()
 
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
@@ -647,6 +886,7 @@ class Handler(SimpleHTTPRequestHandler):
         audit(conn, "request.received", "dlss5-webhook", request_id, "New download request")
         conn.commit()
         conn.close()
+        AUTO_REPLY_WAKE.set()
         self.send_json(HTTPStatus.CREATED, {"ok": True, "id": request_id})
 
     def api_get(self, path, identity):
@@ -659,6 +899,8 @@ class Handler(SimpleHTTPRequestHandler):
                 recent = [row_dict(row) for row in conn.execute("SELECT * FROM events ORDER BY id DESC LIMIT 12")]
                 builds = conn.execute("SELECT COUNT(*) AS count FROM builds WHERE active = 1").fetchone()["count"]
                 return self.send_json(HTTPStatus.OK, {"counts": counts, "activeBuilds": builds, "events": recent})
+            if path == "/api/auto-reply":
+                return self.send_json(HTTPStatus.OK, auto_reply_status())
             if path == "/api/requests":
                 query = self.query()
                 status_value = safe_text((query.get("status") or [""])[0], 40)
@@ -757,8 +999,18 @@ class Handler(SimpleHTTPRequestHandler):
                 if not item:
                     conn.close()
                     return self.send_json(HTTPStatus.NOT_FOUND, {"error": "请求不存在"})
+                if item["last_reply_at"]:
+                    conn.close()
+                    return self.send_json(HTTPStatus.CONFLICT, {"error": "该客户已经回复过，请勿重复发送"})
+                if item["auto_reply_claimed_at"]:
+                    conn.close()
+                    return self.send_json(HTTPStatus.CONFLICT, {"error": "自动回复正在处理该客户，请稍后刷新"})
                 try:
-                    provider_id = send_resend(item["email"], subject, body)
+                    content_digest = hashlib.sha256((subject + "\n" + body).encode("utf-8")).hexdigest()[:20]
+                    provider_id = send_resend(
+                        item["email"], subject, body,
+                        "mailops-manual-reply/%s/%s" % (request_id, content_digest),
+                    )
                 except Exception:
                     audit(conn, "mail.failed", identity["email"], request_id, "Customer reply provider rejected the message")
                     conn.commit()
@@ -880,6 +1132,31 @@ class Handler(SimpleHTTPRequestHandler):
         return self.send_json(HTTPStatus.OK, item)
 
     def api_put(self, path, identity):
+        if path == "/api/auto-reply":
+            payload = self.read_json()
+            enabled = bool(payload.get("enabled"))
+            try:
+                interval = max(1, min(1440, int(payload.get("intervalMinutes", 15))))
+                batch_size = max(1, min(50, int(payload.get("batchSize", 10))))
+            except (TypeError, ValueError):
+                raise ValueError("自动回复周期或批次大小无效")
+            conn = db_connect()
+            now_value = utcnow()
+            for key, value in (
+                ("auto_reply_enabled", "1" if enabled else "0"),
+                ("auto_reply_interval_minutes", str(interval)),
+                ("auto_reply_batch_size", str(batch_size)),
+            ):
+                conn.execute(
+                    """INSERT INTO settings(key, value, updated_at) VALUES (?, ?, ?)
+                       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at""",
+                    (key, value, now_value),
+                )
+            audit(conn, "auto_reply.settings", identity["email"], None, "Enabled: %s; interval: %s min; batch: %s" % (enabled, interval, batch_size))
+            conn.commit()
+            conn.close()
+            AUTO_REPLY_WAKE.set()
+            return self.send_json(HTTPStatus.OK, auto_reply_status())
         if path != "/api/template":
             return self.send_json(HTTPStatus.NOT_FOUND, {"error": "API not found"})
         payload = self.read_json()
@@ -1022,6 +1299,10 @@ class Handler(SimpleHTTPRequestHandler):
 def main():
     init_db()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
+    auto_reply_thread = threading.Thread(
+        target=auto_reply_loop, name="mailops-auto-reply", daemon=True
+    )
+    auto_reply_thread.start()
     print("AlphaNet MailOps listening on http://%s:%s" % (HOST, PORT))
     server.serve_forever()
 

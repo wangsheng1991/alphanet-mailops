@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#090c0b" />
     <title>AlphaNet MailOps</title>
     <link rel="icon" href="/favicon.svg" />
-    <link rel="stylesheet" href="/app.css?v=20261003-2" />
+    <link rel="stylesheet" href="/app.css?v=20261008-1" />
   </head>
   <body>
     <div id="toast" class="toast" aria-live="polite"></div>
@@ -85,6 +85,13 @@
         </section>
 
         <section id="templatePage" class="page hidden">
+          <div class="section-head"><div><p class="eyebrow">AUTOMATED FOLLOW-UP</p><h3>定期自动回复</h3><p>仅对尚未回复的新下载申请发送一次事务邮件；自动分为 RTX 高意向、移动端、GTX 不兼容和信息待补充。</p></div><button id="saveAutoReplyBtn" class="primary">保存自动回复</button></div>
+          <div class="panel automation-card">
+            <label>运行状态<select id="autoReplyEnabled"><option value="on">启用</option><option value="off">暂停</option></select></label>
+            <label>扫描周期（分钟）<input id="autoReplyInterval" type="number" min="1" max="1440" value="15" /></label>
+            <label>每批最多回复<input id="autoReplyBatch" type="number" min="1" max="50" value="10" /></label>
+            <p id="autoReplyStatus">正在读取自动回复状态…</p>
+          </div>
           <div class="section-head"><div><p class="eyebrow">MESSAGE SYSTEM</p><h3>邮件模板</h3><p>可用变量：{recipient_name}、{email}、{machine}、{note}、{build_name}、{download_url}、{expires_hours}</p></div><button id="saveTemplateBtn" class="primary">保存模板</button></div>
           <div class="template-layout">
             <form class="panel editor-card" onsubmit="return false"><label>邮件主题<input id="templateSubject" /></label><label>正文<textarea id="templateBody" rows="17"></textarea></label></form>
@@ -111,6 +118,6 @@
 
     <script defer src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
     <script defer src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
-    <script defer src="/app.js?v=20261003-2"></script>
+    <script defer src="/app.js?v=20261008-1"></script>
   </body>
 </html>
