@@ -890,6 +890,8 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_json(HTTPStatus.CREATED, {"ok": True, "id": request_id})
 
     def api_get(self, path, identity):
+        if path == "/api/auto-reply":
+            return self.send_json(HTTPStatus.OK, auto_reply_status())
         conn = db_connect()
         try:
             if path == "/api/summary":
@@ -899,8 +901,6 @@ class Handler(SimpleHTTPRequestHandler):
                 recent = [row_dict(row) for row in conn.execute("SELECT * FROM events ORDER BY id DESC LIMIT 12")]
                 builds = conn.execute("SELECT COUNT(*) AS count FROM builds WHERE active = 1").fetchone()["count"]
                 return self.send_json(HTTPStatus.OK, {"counts": counts, "activeBuilds": builds, "events": recent})
-            if path == "/api/auto-reply":
-                return self.send_json(HTTPStatus.OK, auto_reply_status())
             if path == "/api/requests":
                 query = self.query()
                 status_value = safe_text((query.get("status") or [""])[0], 40)
